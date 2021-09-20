@@ -76,16 +76,16 @@ summary_details = [
 ]
 poster_details = ["url_poster", "tmdb_poster", "tmdb_profile", "tvdb_poster", "file_poster"]
 background_details = ["url_background", "tmdb_background", "tvdb_background", "file_background"]
-boolean_details = ["visible_library", "visible_home", "visible_shared", "show_filtered", "show_missing", "save_missing", "item_assets", "missing_only_released", "revert_overlay"]
+boolean_details = ["visible_library", "visible_home", "visible_shared", "show_filtered", "show_missing", "save_missing", "missing_only_released", "delete_below_minimum"]
 string_details = ["sort_title", "content_rating", "name_mapping"]
 ignored_details = [
     "smart_filter", "smart_label", "smart_url", "run_again", "schedule", "sync_mode", "template", "test",
-    "tmdb_person", "build_collection", "collection_order", "collection_level", "validate_builders"
+    "tmdb_person", "build_collection", "collection_order", "collection_level", "validate_builders", "collection_name"
 ]
-details = ["collection_mode", "collection_order", "collection_level", "label"] + boolean_details + string_details
+details = ["collection_mode", "collection_order", "collection_level", "collection_minimum", "label"] + boolean_details + string_details
 collectionless_details = ["collection_order", "plex_collectionless", "label", "label_sync_mode", "test"] + \
                          poster_details + background_details + summary_details + string_details
-item_details = ["item_label", "item_radarr_tag", "item_sonarr_tag", "item_overlay"] + list(plex.item_advance_keys.keys())
+item_details = ["item_label", "item_radarr_tag", "item_sonarr_tag", "item_overlay", "item_assets", "revert_overlay"] + list(plex.item_advance_keys.keys())
 radarr_details = ["radarr_add", "radarr_add_existing", "radarr_folder", "radarr_monitor", "radarr_search", "radarr_availability", "radarr_quality", "radarr_tag"]
 sonarr_details = [
     "sonarr_add", "sonarr_add_existing", "sonarr_folder", "sonarr_monitor", "sonarr_language", "sonarr_series",
@@ -94,12 +94,12 @@ sonarr_details = [
 all_filters = [
     "actor", "actor.not",
     "audio_language", "audio_language.not",
-    "audio_track_title", "audio_track_title.not", "audio_track_title.begins", "audio_track_title.ends", "audio_track_title.regex",
+    "audio_track_title", "audio_track_title.not", "audio_track_title.is", "audio_track_title.isnot", "audio_track_title.begins", "audio_track_title.ends", "audio_track_title.regex",
     "collection", "collection.not",
     "content_rating", "content_rating.not",
     "country", "country.not",
     "director", "director.not",
-    "filepath", "filepath.not", "filepath.begins", "filepath.ends", "filepath.regex",
+    "filepath", "filepath.not", "filepath.is", "filepath.isnot", "filepath.begins", "filepath.ends", "filepath.regex",
     "genre", "genre.not",
     "label", "label.not",
     "producer", "producer.not",
@@ -108,7 +108,7 @@ all_filters = [
     "last_played", "last_played.not", "last_played.before", "last_played.after", "last_played.regex",
     "first_episode_aired", "first_episode_aired.not", "first_episode_aired.before", "first_episode_aired.after", "first_episode_aired.regex",
     "last_episode_aired", "last_episode_aired.not", "last_episode_aired.before", "last_episode_aired.after", "last_episode_aired.regex",
-    "title", "title.not", "title.begins", "title.ends", "title.regex",
+    "title", "title.not", "title.is", "title.isnot", "title.begins", "title.ends", "title.regex",
     "plays.gt", "plays.gte", "plays.lt", "plays.lte",
     "tmdb_vote_count.gt", "tmdb_vote_count.gte", "tmdb_vote_count.lt", "tmdb_vote_count.lte",
     "duration.gt", "duration.gte", "duration.lt", "duration.lte",
@@ -116,7 +116,7 @@ all_filters = [
     "user_rating.gt", "user_rating.gte", "user_rating.lt", "user_rating.lte",
     "audience_rating.gt", "audience_rating.gte", "audience_rating.lt", "audience_rating.lte",
     "critic_rating.gt", "critic_rating.gte", "critic_rating.lt", "critic_rating.lte",
-    "studio", "studio.not", "studio.begins", "studio.ends", "studio.regex",
+    "studio", "studio.not", "studio.is", "studio.isnot", "studio.begins", "studio.ends", "studio.regex",
     "subtitle_language", "subtitle_language.not",
     "resolution", "resolution.not",
     "writer", "writer.not",
@@ -126,7 +126,7 @@ all_filters = [
 tmdb_filters = ["original_language", "tmdb_vote_count", "tmdb_year", "first_episode_aired", "last_episode_aired"]
 movie_only_filters = [
     "audio_language", "audio_language.not",
-    "audio_track_title", "audio_track_title.not", "audio_track_title.begins", "audio_track_title.ends", "audio_track_title.regex",
+    "audio_track_title", "audio_track_title.not", "audio_track_title.is", "audio_track_title.isnot", "audio_track_title.begins", "audio_track_title.ends", "audio_track_title.regex",
     "country", "country.not",
     "director", "director.not",
     "duration.gt", "duration.gte", "duration.lt", "duration.lte",
@@ -158,7 +158,7 @@ class CollectionBuilder:
         self.config = config
         self.library = library
         self.metadata = metadata
-        self.name = name
+        self.mapping_name = name
         self.no_missing = no_missing
         self.data = data
         self.language = self.library.Plex.language
@@ -168,7 +168,7 @@ class CollectionBuilder:
             "save_missing": self.library.save_missing,
             "missing_only_released": self.library.missing_only_released,
             "create_asset_folders": self.library.create_asset_folders,
-            "item_assets": False
+            "delete_below_minimum": self.library.delete_below_minimum
         }
         self.item_details = {}
         self.radarr_details = {}
@@ -183,14 +183,26 @@ class CollectionBuilder:
         self.filtered_keys = {}
         self.run_again_movies = []
         self.run_again_shows = []
+        self.items = []
         self.posters = {}
         self.backgrounds = {}
         self.summaries = {}
         self.schedule = ""
+        self.minimum = self.library.collection_minimum
         self.current_time = datetime.now()
         self.current_year = self.current_time.year
 
         methods = {m.lower(): m for m in self.data}
+
+        if "collection_name" in methods:
+            logger.debug("")
+            logger.debug("Validating Method: collection_name")
+            if not self.data[methods["collection_name"]]:
+                raise Failed("Collection Error: collection_name attribute is blank")
+            logger.debug(f"Value: {self.data[methods['collection_name']]}")
+            self.name = self.data[methods["collection_name"]]
+        else:
+            self.name = self.mapping_name
 
         if "template" in methods:
             logger.debug("")
@@ -669,6 +681,8 @@ class CollectionBuilder:
                 self.details[method_name] = plex.collection_mode_options[str(method_data).lower()]
             else:
                 raise Failed(f"Collection Error: {method_data} collection_mode invalid\n\tdefault (Library default)\n\thide (Hide Collection)\n\thide_items (Hide Items in this Collection)\n\tshow_items (Show this Collection and its Items)")
+        elif method_name == "collection_minimum":
+            self.minimum = util.parse(method_name, method_data, datatype="int", minimum=1)
         elif method_name == "label":
             if "label" in methods and "label.sync" in methods:
                 raise Failed("Collection Error: Cannot use label and label.sync together")
@@ -708,6 +722,9 @@ class CollectionBuilder:
                 raise Failed("Each Overlay can only be used once per Library")
             self.library.overlays.append(method_data)
             self.item_details[method_name] = method_data
+        elif method_name in ["item_assets", "revert_overlay"]:
+            if util.parse(method_name, method_data, datatype="bool", default=False):
+                self.item_details[method_name] = True
         elif method_name in plex.item_advance_keys:
             key, options = plex.item_advance_keys[method_name]
             if method_name in advance_new_agent and self.library.agent not in plex.new_plex_agents:
@@ -1069,13 +1086,13 @@ class CollectionBuilder:
                 rating_keys = self.library.Tautulli.get_rating_keys(self.library, value)
             elif "anidb" in method:
                 anidb_ids = self.config.AniDB.get_anidb_ids(method, value, self.language)
-                ids = self.config.Convert.anidb_to_ids(anidb_ids)
+                ids = self.config.Convert.anidb_to_ids(anidb_ids, self.library)
             elif "anilist" in method:
                 anilist_ids = self.config.AniList.get_anilist_ids(method, value)
-                ids = self.config.Convert.anilist_to_ids(anilist_ids)
+                ids = self.config.Convert.anilist_to_ids(anilist_ids, self.library)
             elif "mal" in method:
                 mal_ids = self.config.MyAnimeList.get_mal_ids(method, value)
-                ids = self.config.Convert.myanimelist_to_ids(mal_ids)
+                ids = self.config.Convert.myanimelist_to_ids(mal_ids, self.library)
             elif "tvdb" in method:
                 ids = self.config.TVDb.get_tvdb_ids(method, value, self.language)
             elif "imdb" in method:
@@ -1101,7 +1118,9 @@ class CollectionBuilder:
                     for i, input_data in enumerate(ids, 1):
                         input_id, id_type = input_data
                         util.print_return(f"Parsing ID {i}/{total_ids}")
-                        if id_type == "tmdb" and not self.parts_collection:
+                        if id_type == "ratingKey":
+                            rating_keys.append(input_id)
+                        elif id_type == "tmdb" and not self.parts_collection:
                             if input_id in self.library.movie_map:
                                 rating_keys.append(self.library.movie_map[input_id][0])
                             elif input_id not in self.missing_movies:
@@ -1367,7 +1386,7 @@ class CollectionBuilder:
                     else:
                         logger.error(err)
             return valid_regex
-        elif attribute in ["title", "studio", "episode_title", "audio_track_title"] and modifier in ["", ".not", ".begins", ".ends"]:
+        elif attribute in ["title", "studio", "episode_title", "audio_track_title"] and modifier in ["", ".not", ".is", ".isnot", ".begins", ".ends"]:
             return smart_pair(util.get_list(data, split=False))
         elif attribute == "original_language":
             return util.get_list(data, lower=True)
@@ -1705,15 +1724,10 @@ class CollectionBuilder:
             logger.info("")
             logger.info(f"{count_removed} {self.collection_level.capitalize()}{'s' if count_removed == 1 else ''} Removed")
 
-    def update_item_details(self):
-        add_tags = self.item_details["item_label"] if "item_label" in self.item_details else None
-        remove_tags = self.item_details["item_label.remove"] if "item_label.remove" in self.item_details else None
-        sync_tags = self.item_details["item_label.sync"] if "item_label.sync" in self.item_details else None
-
-        if self.build_collection:
-            items = self.library.get_collection_items(self.obj, self.smart_label_collection)
-        else:
-            items = []
+    def load_collection_items(self):
+        if self.build_collection and self.obj:
+            self.items = self.library.get_collection_items(self.obj, self.smart_label_collection)
+        elif not self.build_collection:
             logger.info("")
             util.separator(f"Items Found for {self.name} Collection", space=False, border=False)
             logger.info("")
@@ -1721,10 +1735,13 @@ class CollectionBuilder:
                 try:
                     item = self.fetch_item(rk)
                     logger.info(f"{item.title} (Rating Key: {rk})")
-                    items.append(item)
+                    self.items.append(item)
                 except Failed as e:
                     logger.error(e)
+        if not self.items:
+            raise Failed(f"Plex Error: No Collection items found")
 
+    def update_item_details(self):
         logger.info("")
         util.separator(f"Updating Details of the Items in {self.name} Collection", space=False, border=False)
         logger.info("")
@@ -1751,16 +1768,20 @@ class CollectionBuilder:
             temp_image = os.path.join(overlay_folder, f"temp.png")
             overlay = (overlay_name, overlay_folder, overlay_image, temp_image)
 
-        revert = "revert_overlay" in self.details and self.details["revert_overlay"]
+        revert = "revert_overlay" in self.item_details
         if revert:
             overlay = None
 
+        add_tags = self.item_details["item_label"] if "item_label" in self.item_details else None
+        remove_tags = self.item_details["item_label.remove"] if "item_label.remove" in self.item_details else None
+        sync_tags = self.item_details["item_label.sync"] if "item_label.sync" in self.item_details else None
+
         tmdb_ids = []
         tvdb_ids = []
-        for item in items:
+        for item in self.items:
             if int(item.ratingKey) in rating_keys and not revert:
                 rating_keys.remove(int(item.ratingKey))
-            if self.details["item_assets"] or overlay is not None:
+            if "item_assets" in self.item_details or overlay is not None:
                 try:
                     self.library.update_item_from_assets(item, overlay=overlay)
                 except Failed as e:
@@ -1803,7 +1824,11 @@ class CollectionBuilder:
                 os.remove(og_image)
             self.config.Cache.update_image_map(item.ratingKey, self.library.image_table_name, "", "")
 
-    def update_details(self):
+    def delete_collection(self):
+        if self.obj:
+            self.library.query(self.obj.delete)
+
+    def load_collection(self):
         if not self.obj and self.smart_url:
             self.library.create_smart_collection(self.name, self.smart_type_key, self.smart_url)
         elif self.smart_label_collection:
@@ -1815,6 +1840,10 @@ class CollectionBuilder:
                 raise Failed(f"Collection Error: Label: {self.name} was not added to any items in the Library")
         self.obj = self.library.get_collection(self.name)
 
+    def update_details(self):
+        logger.info("")
+        util.separator(f"Updating Details of {self.name} Collection", space=False, border=False)
+        logger.info("")
         if self.smart_url and self.smart_url != self.library.smart_filter(self.obj):
             self.library.update_smart_collection(self.obj, self.smart_url)
             logger.info(f"Detail: Smart Filter updated to {self.smart_url}")
@@ -1963,6 +1992,9 @@ class CollectionBuilder:
             self.library.upload_images(self.obj, poster=poster, background=background)
 
     def sort_collection(self):
+        logger.info("")
+        util.separator(f"Sorting {self.name} Collection", space=False, border=False)
+        logger.info("")
         items = self.library.get_collection_items(self.obj, self.smart_label_collection)
         keys = {item.ratingKey: item for item in items}
         previous = None
