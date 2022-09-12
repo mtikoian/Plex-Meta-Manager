@@ -1,8 +1,7 @@
-import logging
 from modules import util
 from modules.util import Failed
 
-logger = logging.getLogger("Plex Meta Manager")
+logger = util.logger
 
 builders = ["icheckmovies_list", "icheckmovies_list_details"]
 base_url = "https://www.icheckmovies.com/lists/"
@@ -12,6 +11,8 @@ class ICheckMovies:
         self.config = config
 
     def _request(self, url, language, xpath):
+        if self.config.trace_mode:
+            logger.debug(f"URL: {url}")
         return self.config.get_html(url, headers=util.header(language)).xpath(xpath)
 
     def _parse_list(self, list_url, language):
@@ -34,7 +35,7 @@ class ICheckMovies:
                 raise Failed(f"ICheckMovies Error: {list_url} failed to parse")
         return valid_lists
 
-    def get_icheckmovies_ids(self, method, data, language):
+    def get_imdb_ids(self, method, data, language):
         if method == "icheckmovies_list":
             logger.info(f"Processing ICheckMovies List: {data}")
             return self._parse_list(data, language)

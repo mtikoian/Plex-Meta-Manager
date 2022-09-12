@@ -1,31 +1,48 @@
-import logging, re, requests
+import re, requests
 from modules import util
-from modules.util import Failed
+from modules.util import Failed, NonExisting
 from plexapi.exceptions import BadRequest
 
-logger = logging.getLogger("Plex Meta Manager")
+logger = util.logger
 
-anime_lists_url = "https://raw.githubusercontent.com/Fribb/anime-lists/master/anime-list-full.json"
+anime_lists_url = "https://raw.githubusercontent.com/meisnate12/Plex-Meta-Manager-Anime-IDs/master/pmm_anime_ids.json"
 
 class Convert:
     def __init__(self, config):
         self.config = config
-        self.anidb_ids = {}
-        self.mal_to_anidb = {}
-        self.anilist_to_anidb = {}
-        self.anidb_to_imdb = {}
-        self.anidb_to_tvdb = {}
-        for anime_id in self.config.get_json(anime_lists_url):
-            if "anidb_id" in anime_id:
-                self.anidb_ids[anime_id["anidb_id"]] = anime_id
-                if "mal_id" in anime_id:
-                    self.mal_to_anidb[int(anime_id["mal_id"])] = int(anime_id["anidb_id"])
-                if "anilist_id" in anime_id:
-                    self.anilist_to_anidb[int(anime_id["anilist_id"])] = int(anime_id["anidb_id"])
-                if "imdb_id" in anime_id and str(anime_id["imdb_id"]).startswith("tt"):
-                    self.anidb_to_imdb[int(anime_id["anidb_id"])] = util.get_list(anime_id["imdb_id"])
-                if "thetvdb_id" in anime_id:
-                    self.anidb_to_tvdb[int(anime_id["anidb_id"])] = int(anime_id["thetvdb_id"])
+        self._anidb_ids = {}
+        self._mal_to_anidb = {}
+        self._anilist_to_anidb = {}
+        self._anidb_to_imdb = {}
+        self._anidb_to_tvdb = {}
+        self._imdb_to_anidb = {}
+        self._tvdb_to_anidb = {}
+        self._anidb_ids = self.config.get_json(anime_lists_url)
+        for anidb_id, ids in self._anidb_ids.items():
+            anidb_id = int(anidb_id)
+            if "mal_id" in ids:
+                self._mal_to_anidb[int(ids["mal_id"])] = anidb_id
+            if "anilist_id" in ids:
+                self._anilist_to_anidb[int(ids["anilist_id"])] = anidb_id
+            if "imdb_id" in ids and str(ids["imdb_id"]).startswith("tt"):
+                self._anidb_to_imdb[anidb_id] = util.get_list(ids["imdb_id"])
+                for im_id in util.get_list(ids["imdb_id"]):
+                    self._imdb_to_anidb[im_id] = anidb_id
+            if "tvdb_id" in ids:
+                self._anidb_to_tvdb[anidb_id] = int(ids["tvdb_id"])
+                self._tvdb_to_anidb[int(ids["tvdb_id"])] = anidb_id
+
+    def imdb_to_anidb(self, imdb_id):
+        if imdb_id in self._imdb_to_anidb:
+            return self._imdb_to_anidb[imdb_id]
+        else:
+            raise Failed(f"AniDB ID not found for IMDb ID: {imdb_id}")
+
+    def tvdb_to_anidb(self, tvdb_id):
+        if int(tvdb_id) in self._tvdb_to_anidb:
+            return self._tvdb_to_anidb[int(tvdb_id)]
+        else:
+            raise Failed(f"AniDB ID not found for TVDb ID: {tvdb_id}")
 
     def anidb_to_ids(self, anidb_ids, library):
         ids = []
@@ -33,30 +50,30 @@ class Convert:
         for anidb_id in anidb_list:
             if anidb_id in library.anidb_map:
                 ids.append((library.anidb_map[anidb_id], "ratingKey"))
-            elif anidb_id in self.anidb_to_imdb:
+            elif anidb_id in self._anidb_to_imdb:
                 added = False
-                for imdb in self.anidb_to_imdb[anidb_id]:
+                for imdb in self._anidb_to_imdb[anidb_id]:
                     tmdb, tmdb_type = self.imdb_to_tmdb(imdb)
                     if tmdb and tmdb_type == "movie":
                         ids.append((tmdb, "tmdb"))
                         added = True
-                if added is False and anidb_id in self.anidb_to_tvdb:
-                    ids.append((self.anidb_to_tvdb[anidb_id], "tvdb"))
-            elif anidb_id in self.anidb_to_tvdb:
-                ids.append((self.anidb_to_tvdb[anidb_id], "tvdb"))
-            elif anidb_id in self.anidb_ids:
-                logger.error(f"Convert Error: No TVDb ID or IMDb ID found for AniDB ID: {anidb_id}")
+                if added is False and anidb_id in self._anidb_to_tvdb:
+                    ids.append((self._anidb_to_tvdb[anidb_id], "tvdb"))
+            elif anidb_id in self._anidb_to_tvdb:
+                ids.append((self._anidb_to_tvdb[anidb_id], "tvdb"))
+            elif str(anidb_id) in self._anidb_ids:
+                logger.warning(f"Convert Error: No TVDb ID or IMDb ID found for AniDB ID: {anidb_id}")
             else:
-                logger.error(f"Convert Error: AniDB ID: {anidb_id} not found")
+                logger.warning(f"Convert Error: AniDB ID: {anidb_id} not found")
         return ids
 
     def anilist_to_ids(self, anilist_ids, library):
         anidb_ids = []
         for anilist_id in anilist_ids:
-            if anilist_id in self.anilist_to_anidb:
-                anidb_ids.append(self.anilist_to_anidb[anilist_id])
+            if anilist_id in self._anilist_to_anidb:
+                anidb_ids.append(self._anilist_to_anidb[anilist_id])
             else:
-                logger.error(f"Convert Error: AniDB ID not found for AniList ID: {anilist_id}")
+                logger.warning(f"Convert Error: AniDB ID not found for AniList ID: {anilist_id}")
         return self.anidb_to_ids(anidb_ids, library)
 
     def myanimelist_to_ids(self, mal_ids, library):
@@ -64,10 +81,10 @@ class Convert:
         for mal_id in mal_ids:
             if int(mal_id) in library.mal_map:
                 ids.append((library.mal_map[int(mal_id)], "ratingKey"))
-            elif int(mal_id) in self.mal_to_anidb:
-                ids.extend(self.anidb_to_ids(self.mal_to_anidb[int(mal_id)], library))
+            elif int(mal_id) in self._mal_to_anidb:
+                ids.extend(self.anidb_to_ids(self._mal_to_anidb[int(mal_id)], library))
             else:
-                logger.error(f"Convert Error: AniDB ID not found for MyAnimeList ID: {mal_id}")
+                logger.warning(f"Convert Error: AniDB ID not found for MyAnimeList ID: {mal_id}")
         return ids
 
     def tmdb_to_imdb(self, tmdb_id, is_movie=True, fail=False):
@@ -187,36 +204,47 @@ class Convert:
         else:
             return None
 
+    def ids_from_cache(self, ratingKey, guid, item_type, check_id, library):
+        media_id_type = None
+        cache_id = None
+        imdb_check = None
+        expired = None
+        if self.config.Cache:
+            cache_id, imdb_check, media_type, expired = self.config.Cache.query_guid_map(guid)
+            if (cache_id or imdb_check) and not expired:
+                media_id_type = "movie" if "movie" in media_type else "show"
+                if item_type == "hama" and check_id.startswith("anidb"):
+                    anidb_id = int(re.search("-(.*)", check_id).group(1))
+                    library.anidb_map[anidb_id] = ratingKey
+                elif item_type == "myanimelist":
+                    library.mal_map[int(check_id)] = ratingKey
+        return media_id_type, cache_id, imdb_check, expired
+
+    def scan_guid(self, guid_str):
+        guid = requests.utils.urlparse(guid_str)
+        return guid.scheme.split(".")[-1], guid.netloc
+
     def get_id(self, item, library):
         expired = None
         tmdb_id = []
         tvdb_id = []
         imdb_id = []
         anidb_id = None
-        guid = requests.utils.urlparse(item.guid)
-        item_type = guid.scheme.split(".")[-1]
-        check_id = guid.netloc
-        if self.config.Cache:
-            cache_id, imdb_check, media_type, expired = self.config.Cache.query_guid_map(item.guid)
-            if cache_id and not expired:
-                media_id_type = "movie" if "movie" in media_type else "show"
-                if item_type == "hama" and check_id.startswith("anidb"):
-                    anidb_id = int(re.search("-(.*)", check_id).group(1))
-                    library.anidb_map[anidb_id] = item.ratingKey
-                elif item_type == "myanimelist":
-                    library.mal_map[int(check_id)] = item.ratingKey
-                return media_id_type, cache_id, imdb_check
+        item_type, check_id = self.scan_guid(item.guid)
+        media_id_type, cache_id, imdb_check, expired = self.ids_from_cache(item.ratingKey, item.guid, item_type, check_id, library)
+        if (cache_id or imdb_check) and expired is False:
+            return media_id_type, cache_id, imdb_check
         try:
             if item_type == "plex":
                 try:
-                    for guid_tag in library.get_guids(item):
+                    for guid_tag in item.guids:
                         url_parsed = requests.utils.urlparse(guid_tag.id)
                         if url_parsed.scheme == "tvdb":                 tvdb_id.append(int(url_parsed.netloc))
                         elif url_parsed.scheme == "imdb":               imdb_id.append(url_parsed.netloc)
                         elif url_parsed.scheme == "tmdb":               tmdb_id.append(int(url_parsed.netloc))
                 except requests.exceptions.ConnectionError:
                     library.query(item.refresh)
-                    util.print_stacktrace()
+                    logger.stacktrace()
                     raise Failed("No External GUIDs found")
                 if not tvdb_id and not imdb_id and not tmdb_id:
                     library.query(item.refresh)
@@ -224,36 +252,47 @@ class Convert:
             elif item_type == "imdb":                       imdb_id.append(check_id)
             elif item_type == "thetvdb":                    tvdb_id.append(int(check_id))
             elif item_type == "themoviedb":                 tmdb_id.append(int(check_id))
+            elif item_type in ["xbmcnfo", "xbmcnfotv"]:
+                if len(check_id) > 10:
+                    raise Failed(f"XMBC NFO Local ID: {check_id}")
+                try:
+                    if item_type == "xbmcnfo":
+                        tmdb_id.append(int(check_id))
+                    else:
+                        tvdb_id.append(int(check_id))
+                except ValueError:
+                    imdb_id.append(check_id)
             elif item_type == "hama":
                 if check_id.startswith("tvdb"):
                     tvdb_id.append(int(re.search("-(.*)", check_id).group(1)))
                 elif check_id.startswith("anidb"):
-                    anidb_id = int(re.search("-(.*)", check_id).group(1))
+                    anidb_str = str(re.search("-(.*)", check_id).group(1))
+                    anidb_id = int(anidb_str[1:] if anidb_str[0] == "a" else anidb_str)
                     library.anidb_map[anidb_id] = item.ratingKey
                 else:
                     raise Failed(f"Hama Agent ID: {check_id} not supported")
             elif item_type == "myanimelist":
                 library.mal_map[int(check_id)] = item.ratingKey
-                if int(check_id) in self.mal_to_anidb:
-                    anidb_id = self.mal_to_anidb[int(check_id)]
+                if int(check_id) in self._mal_to_anidb:
+                    anidb_id = self._mal_to_anidb[int(check_id)]
                 else:
-                    raise Failed(f"Convert Error: AniDB ID not found for MyAnimeList ID: {check_id}")
-            elif item_type == "local":                      raise Failed("No match in Plex")
-            else:                                           raise Failed(f"Agent {item_type} not supported")
+                    raise Failed(f"AniDB ID not found for MyAnimeList ID: {check_id}")
+            elif item_type == "local":                      raise NonExisting("No match in Plex")
+            else:                                           raise NonExisting(f"Agent {item_type} not supported")
 
             if anidb_id:
-                if anidb_id in self.anidb_to_imdb:
+                if anidb_id in self._anidb_to_imdb:
                     added = False
-                    for imdb in self.anidb_to_imdb[anidb_id]:
+                    for imdb in self._anidb_to_imdb[anidb_id]:
                         tmdb, tmdb_type = self.imdb_to_tmdb(imdb)
                         if tmdb and tmdb_type == "movie":
                             imdb_id.append(imdb)
                             tmdb_id.append(tmdb)
                             added = True
-                    if added is False and anidb_id in self.anidb_to_tvdb:
-                        tvdb_id.append(self.anidb_to_tvdb[anidb_id])
-                elif anidb_id in self.anidb_to_tvdb:
-                    tvdb_id.append(self.anidb_to_tvdb[anidb_id])
+                    if added is False and anidb_id in self._anidb_to_tvdb:
+                        tvdb_id.append(self._anidb_to_tvdb[anidb_id])
+                elif anidb_id in self._anidb_to_tvdb:
+                    tvdb_id.append(self._anidb_to_tvdb[anidb_id])
                 else:
                     raise Failed(f"AniDB: {anidb_id} not found")
             else:
@@ -288,24 +327,27 @@ class Convert:
                     cache_ids = ",".join([str(c) for c in cache_ids])
                     imdb_in = ",".join([str(i) for i in imdb_in]) if imdb_in else None
                     ids = f"{item.guid:<46} | {id_type} ID: {cache_ids:<7} | IMDb ID: {str(imdb_in):<10}"
-                    logger.info(util.adjust_space(f" Cache  |  {'^' if expired else '+'}  | {ids} | {item.title}"))
+                    logger.info(f" Cache  |  {'^' if expired else '+'}  | {ids} | {item.title}")
                     self.config.Cache.update_guid_map(item.guid, cache_ids, imdb_in, expired, guid_type)
 
-            if tmdb_id and library.is_movie:
+            if (tmdb_id or imdb_id) and library.is_movie:
                 update_cache(tmdb_id, "TMDb", imdb_id, "movie")
                 return "movie", tmdb_id, imdb_id
-            elif tvdb_id and library.is_show:
+            elif (tvdb_id or imdb_id) and library.is_show:
                 update_cache(tvdb_id, "TVDb", imdb_id, "show")
                 return "show", tvdb_id, imdb_id
-            elif anidb_id and tmdb_id and library.is_show:
+            elif anidb_id and (tmdb_id or imdb_id) and library.is_show:
                 update_cache(tmdb_id, "TMDb", imdb_id, "show_movie")
                 return "movie", tmdb_id, imdb_id
             else:
                 logger.debug(f"TMDb: {tmdb_id}, IMDb: {imdb_id}, TVDb: {tvdb_id}")
                 raise Failed(f"No ID to convert")
         except Failed as e:
-            logger.info(util.adjust_space(f"Mapping Error | {item.guid:<46} | {e} for {item.title}"))
+            logger.info(f'Mapping Error | {item.guid:<46} | {e} for "{item.title}"')
+        except NonExisting as e:
+            if not library.is_other:
+                logger.info(f'Mapping Error | {item.guid:<46} | {e} for "{item.title}"')
         except BadRequest:
-            util.print_stacktrace()
-            logger.info(util.adjust_space(f"Mapping Error | {item.guid:<46} | Bad Request for {item.title}"))
+            logger.stacktrace()
+            logger.info(f'Mapping Error | {item.guid:<46} | Bad Request for "{item.title}"')
         return None, None, None
