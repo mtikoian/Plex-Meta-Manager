@@ -8,14 +8,15 @@ __pycache__/
 
 # Distribution / packaging
 .idea
+.vscode
 .Python
-/test.py
+/test*
 logs/
 config/*
 !config/overlays/
+config/overlays/*/
+config/overlays/temp.png
 !config/*.template
-*.png
-!overlay.png
 build/
 develop-eggs/
 dist/
@@ -117,6 +118,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+pmm-venv/
 
 # Spyder project settings
 .spyderproject
